@@ -32,18 +32,22 @@ function Invoke-Sort {
         if (!($totalExtensions -contains $file.Extension.ToLower())) {         
             $targetDir = Join-Path -Path $sourceDir -ChildPath "Metadata"
             Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
+            continue
         }
         if ($livePhotoExtensions -contains $file.Extension.ToLower()) {         
             $targetDir = Join-Path -Path $sourceDir -ChildPath "Live Photos"
             Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
+            continue
         }
         if ($file.Name -match "^Screenshot") {
             $targetDir = Join-Path -Path $sourceDir -ChildPath "Screenshots"
             Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
+            continue
         }
         if ($file.Name -match "^FB|received") {
             $targetDir = Join-Path -Path $sourceDir -ChildPath "Facebook"
             Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
+            continue
         }
         # Attempt to extract the year from the exif
         try {
