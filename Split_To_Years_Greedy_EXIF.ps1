@@ -74,8 +74,11 @@ function Invoke-Sort {
                 elseif ($photoExtensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Photos" }
                 Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
             } else {
-                Write-Output "File name does not have with a valid year: $($file.Name)"
-                Continue
+                Write-Output "File name does not have with a valid year: $($file.FullName)"
+                if ($videoExtensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified Videos" } 
+                elseif ($photoExtensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified Photos" }
+                else { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified" }
+                Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
             }
         }
     }
