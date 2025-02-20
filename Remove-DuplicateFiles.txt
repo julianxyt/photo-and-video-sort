@@ -1,0 +1,30 @@
+function Remove-DuplicateFiles {
+    param (
+        [string]$directoryPath
+    )
+
+    # Get all files in the directory and subdirectories
+    $files = Get-ChildItem -Path $directoryPath -File #-Recurse
+    Write-Output "Found file with the name: $($file.Name)"
+    # Group files by their names
+    $groupedFiles = $files | Group-Object -Property Name
+
+    foreach ($group in $groupedFiles) {
+        # If there's more than one file with the same name, process duplicates
+        if ($group.Count -gt 1) {
+            Write-Output "Found duplicate files with the name: $($group.Name)"
+            # Keep the first file, remove the rest
+            $filesToDelete = $group.Group | Select-Object -Skip 1
+
+            foreach ($file in $filesToDelete) {
+                Write-Output "Removing: $($file.FullName)"
+                Remove-Item -Path $file.FullName -Force
+            }
+        }
+    }
+    Write-Output "Duplicate removal process completed."
+}
+
+# Example usage
+$directoryPath = $pwd
+Remove-DuplicateFiles -directoryPath $directoryPath
