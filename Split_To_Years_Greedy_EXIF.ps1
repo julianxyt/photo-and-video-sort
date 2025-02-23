@@ -1,6 +1,6 @@
 function Invoke-MoveToYear {
     param (
-        [string]$parentDir,
+        [string]$housingDir,
         [string]$targetDir,
         [string]$year,
         [System.IO.FileInfo]$file
@@ -16,7 +16,7 @@ function Invoke-MoveToYear {
 
     if (Test-Path -Path $destination) {
         Write-Warning "File already exists at destination: $destination. Recycling..."
-        $move_to = Join-Path -Path "$parentDir\Recycle Bin" -ChildPath $file.Name
+        $move_to = Join-Path -Path "$housingDir\Recycle Bin" -ChildPath $file.Name
         try {
             Move-Item -Path $file.FullName -Destination $move_to -ErrorAction Stop
         } catch {
@@ -37,13 +37,13 @@ function Get-TargetDir {
     Write-Host "Year extracted: $year"
     $childFolder = "$year $type"
     # Move to relevant folder
-    $targetDir = Join-Path -Path $parentDir -ChildPath $childFolder
+    $targetDir = Join-Path -Path $housingDir -ChildPath $childFolder
     return $targetDir
 }
 
 function Invoke-Sort {
     param (
-        [string]$parentDir,
+        [string]$housingDir,
         [System.IO.FileInfo]$file
     )
     # Define the video file extensions
@@ -51,31 +51,31 @@ function Invoke-Sort {
     $photoextensions = @('.jpg', '.jpeg', '.heic', '.png')
     $livephotoextensions = @('.mp')
     $totalextensions = $videoextensions + $photoextensions + $livephotoextensions
-    if (-not (Test-Path -Path "$parentDir\Recycle Bin")) {
-        Write-Host "Creating directory: $parentDir\Recycle Bin"
-        New-Item -Path "$parentDir\Recycle Bin" -ItemType Directory | Out-Null
+    if (-not (Test-Path -Path "$housingDir\Recycle Bin")) {
+        Write-Host "Creating directory: $housingDir\Recycle Bin"
+        New-Item -Path "$housingDir\Recycle Bin" -ItemType Directory | Out-Null
     }
     # Loop through each file
     foreach ($file in $files) {
         #### Guard statements for non-year files
         if (!($totalextensions -contains $file.Extension.ToLower())) {   
-            $targetDir = Join-Path -Path $parentDir -ChildPath "Metadata"
-            Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+            $targetDir = Join-Path -Path $housingDir -ChildPath "Metadata"
+            Invoke-MoveToYear -housingDir $housingDir -file $file -year $year -targetDir $targetDir
             continue
         }
         if ($livephotoextensions -contains $file.Extension.ToLower()) {         
-            $targetDir = Join-Path -Path $parentDir -ChildPath "Live Photos"
-            Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+            $targetDir = Join-Path -Path $housingDir -ChildPath "Live Photos"
+            Invoke-MoveToYear -housingDir $housingDir -file $file -year $year -targetDir $targetDir
             continue
         }
         if ($file.Name -match "^Screenshot") {
-            $targetDir = Join-Path -Path $parentDir -ChildPath "Screenshots"
-            Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+            $targetDir = Join-Path -Path $housingDir -ChildPath "Screenshots"
+            Invoke-MoveToYear -housingDir $housingDir -file $file -year $year -targetDir $targetDir
             continue
         }
         if ($file.Name -match "^FB|received") {
-            $targetDir = Join-Path -Path $parentDir -ChildPath "Facebook"
-            Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+            $targetDir = Join-Path -Path $housingDir -ChildPath "Facebook"
+            Invoke-MoveToYear -housingDir $housingDir -file $file -year $year -targetDir $targetDir
             continue
         }
         # Determine Photo or Video
@@ -96,26 +96,26 @@ function Invoke-Sort {
             Write-Host "Original Time of Create: $( $exifObject.DateTimeOriginal )"
             $year = ($exifObject.DateTimeOriginal).Substring(0, 4)
             $targetDir = Get-TargetDir -year $year -type $type
-            Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+            Invoke-MoveToYear -housingDir $housingDir -file $file -year $year -targetDir $targetDir
         } catch {
             # Failed - go to Name Pattern Match
             Write-Host "File does not have System.photo.DateTaken, using Name Pattern Matching: $($file.Name)" -ForegroundColor Cyan
             if ($file.Name -match "(20[0-9]{2})([0][0-9]|[1][0-2])([0-3][0-9])") {
                 $year = $matches[1]
                 $targetDir = Get-TargetDir -year $year -type $type
-                Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+                Invoke-MoveToYear -housingDir $housingDir -file $file -year $year -targetDir $targetDir
             } else {
                     Write-Host "File name does not have with a valid year: $($file.FullName)"
                     $targetDir = Get-TargetDir -year "Unclassified" -type $type
-                    Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+                    Invoke-MoveToYear -housingDir $housingDir -file $file -year $year -targetDir $targetDir
                 # try {
                 #     $year = ($file.LastWriteTime).Year
                 #     $targetDir = Get-TargetDir -year $year -type $type
-                #     Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+                #     Invoke-MoveToYear -housingDir $housingDir -file $file -year $year -targetDir $targetDir
                 # } catch {
                 #     Write-Host "File name does not have with a valid year: $($file.FullName)"
                 #     $targetDir = Get-TargetDir -year "Unclassified" -type $type
-                #     Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+                #     Invoke-MoveToYear -housingDir $housingDir -file $file -year $year -targetDir $targetDir
                 # }
             }
         }
@@ -123,12 +123,14 @@ function Invoke-Sort {
 }
 
 $env:EXIFTOOLPATH = 'C:\Program Files\exiftool-12.97_64\exiftool.exe'
-# Define the source directory where the images and videos are located
-$workingDir = $pwd
-$parentDir = Split-Path -Path $pwd -Parent
+# Go to the dir where all your photos/videos are
+$unsortedDir = $pwd
+# Define the directory to house the new folder destinations
+$housingDir = Split-Path -Path $pwd -Parent
+# $housingDir = $pwd
 
 # Get all files in the source directory
-#$files = Get-ChildItem -Path $workingDir -File
-$files = Get-ChildItem -Path $workingDir -File -Recurse
+#$files = Get-ChildItem -Path $unsortedDir -File
+$files = Get-ChildItem -Path $unsortedDir -File -Recurse
 
-Invoke-Sort -files $files -parentDir $parentDir
+Invoke-Sort -files $files -housingDir $housingDir
