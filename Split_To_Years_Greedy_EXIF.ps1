@@ -15,15 +15,20 @@ function Invoke-MoveToYear {
     Write-Host "Moving file to: $destination"
 
     if (Test-Path -Path $destination) {
-        Write-Warning "File already exists at destination: $destination. Deleting..."
+        Write-Warning "File already exists at destination: $destination. Recycling..."
         $move_to = Join-Path -Path "$parentDir\Recycle Bin" -ChildPath $file.Name
-        Move-Item -Path $file.FullName -Destination $move_to
+        try {
+            Move-Item -Path $file.FullName -Destination $move_to
+        } catch {
+            Remove-Item -Path $file.FullName
+        }
     } else {
         # Move the file to the destination
         Move-Item -Path $file.FullName -Destination $destination
         Write-Host "$( $file.FullName ) --> $destination" -ForegroundColor Green
     }
 }
+
 function Get-TargetDir {
     param (
         [string]$year,
