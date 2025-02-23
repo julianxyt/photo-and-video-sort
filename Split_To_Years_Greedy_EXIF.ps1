@@ -48,7 +48,7 @@ function Invoke-Sort {
             continue
         }
         if ($livephotoextensions -contains $file.Extension.ToLower()) {         
-            $targetDir = Join-Path -Path $sourceDir -ChildPath "live photos"
+            $targetDir = Join-Path -Path $sourceDir -ChildPath "Live Photos"
             Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
             continue
         }
@@ -73,8 +73,8 @@ function Invoke-Sort {
             $year = ($exifObject.DateTimeOriginal).Substring(0, 4)
             Write-Output "Year extracted: $year"
             # Move to relevant folder
-            if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year videos" } 
-            elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year photos" }
+            if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Videos" } 
+            elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Photos" }
             Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
         } catch {
             # Failed - go to Name Pattern Match
@@ -83,13 +83,13 @@ function Invoke-Sort {
                 $year = $matches[1]
                 Write-Output "Year extracted: $year"
                 # Move to relevant folder
-                if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year videos" } 
-                elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year photos" }
+                if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Videos" } 
+                elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Photos" }
                 Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
             } else {
                 Write-Output "File name does not have with a valid year: $($file.FullName)"
-                if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified videos" } 
-                elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified photos" }
+                if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified Videos" } 
+                elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified Photos" }
                 else { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified" }
                 Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
             }
