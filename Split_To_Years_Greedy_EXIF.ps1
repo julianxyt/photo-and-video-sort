@@ -16,16 +16,34 @@ function Invoke-MoveToYear {
 
     if (Test-Path -Path $destination) {
         Write-Warning "File already exists at destination: $destination. Recycling..."
-        $move_to = Join-Path -Path "$housingDir\Recycle Bin" -ChildPath $file.Name
+        $moveTo = Join-Path -Path "$housingDir\Recycle Bin" -ChildPath $file.Name
         try {
-            Move-Item -Path $file.FullName -Destination $move_to -ErrorAction Stop
+            Move-Item -Path $file.FullName -Destination $moveTo -ErrorAction Stop
         } catch {
-            Remove-Item -Path $file.FullName
+            Invoke-Remove -file $file -moveTo $moveTo -desination $destination
         }
     } else {
         # Move the file to the destination
         Move-Item -Path $file.FullName -Destination $destination
         Write-Host "$( $file.FullName ) --> $destination" -ForegroundColor Green
+    }
+}
+
+function Invoke-Remove {
+    param (
+        [System.IO.FileInfo]$file,
+        [string]$moveTo
+    )
+    $sourceHash = Get-FileHash -Path $file.FullName -Algorithm SHA256
+    $destHash = Get-FileHash -Path $moveTo -Algorithm SHA256
+    if ($sourceHash.Hash -eq $destHash.Hash) {
+        Write-Output "Duplicate detected. Deleting: $($file.FullName)"
+        Remove-Item -Path $file.FullName
+    } else {
+        Write-Output "File with same name exists but has different content. Keeping both."
+        $newName = "{0}({1}){2}" -f $file.BaseName, (Get-Random), $file.Extension
+        $destination = Join-Path -Path $( Split-Path -Path $moveTo ) -ChildPath $newName
+        Move-Item -Path $file.FullName -Destination $destination
     }
 }
 
@@ -48,7 +66,7 @@ function Invoke-Sort {
     )
     # Define the video file extensions
     $videoextensions = @('.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv')
-    $photoextensions = @('.jpg', '.jpeg', '.heic', '.png')
+    $photoextensions = @('.jpg', '.jpeg', '.heic', '.png', '.nef')
     $livephotoextensions = @('.mp')
     $totalextensions = $videoextensions + $photoextensions + $livephotoextensions
     if (-not (Test-Path -Path "$housingDir\Recycle Bin")) {
