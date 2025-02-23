@@ -10,15 +10,16 @@ function Invoke-MoveToYear {
         Write-Host "Creating directory: $targetDir"
         New-Item -Path $targetDir -ItemType Directory | Out-Null
     }
-
+    sleep 2
     # Move the file to the target directory
     $destination = Join-Path -Path $targetDir -ChildPath $file.Name
     Write-Host "Moving file to: $destination"
 
     if (Test-Path -Path $destination) {
         Write-Warning "File already exists at destination: $destination. Skipping move and auto-deleting."
-        $mock_bin = "$parentDir/Recycle Bin"
-        Move-Item -Path $file.FullName -Destination "$( Join-Path -Path $mock_bin -ChildPath $file.Name )"
+        $move_to = Join-Path -Path "$parentDir\Recycle Bin" -ChildPath $file.Name
+        echo $move_to
+        Move-Item -Path $file.FullName -Destination $move_to
     } else {
         # Move the file to the destination
         Move-Item -Path $file.FullName -Destination $destination
@@ -36,6 +37,10 @@ function Invoke-Sort {
     $photoextensions = @('.jpg', '.jpeg', '.heic', '.png')
     $livephotoextensions = @('.mp')
     $totalextensions = $videoextensions + $photoextensions + $livephotoextensions
+    if (-not (Test-Path -Path "$parentDir\Recycle Bin")) {
+        Write-Host "Creating directory: $parentDir\Recycle Bin"
+        New-Item -Path "$parentDir\Recycle Bin" -ItemType Directory | Out-Null
+    }
     # Loop through each file
     foreach ($file in $files) {
         #### Guard statements for non-year files
