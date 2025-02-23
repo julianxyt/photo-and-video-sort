@@ -25,6 +25,17 @@ function Invoke-MoveToYear {
         Write-Host "$( $file.FullName ) --> moved to $destination" -ForegroundColor Green
     }
 }
+function Get-TargetDir {
+    param (
+        [string]$year,
+        [string]$type
+    )
+    Write-Host "Year extracted: $year"
+    $childFolder = "$year $type"
+    # Move to relevant folder
+    $targetDir = Join-Path -Path $parentDir -ChildPath $childFolder
+    return $targetDir
+}
 
 function Invoke-Sort {
     param (
@@ -63,6 +74,14 @@ function Invoke-Sort {
             Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
             continue
         }
+        # Determine Photo or Video
+        if ($photoextensions -contains $file.Extension.ToLower()) { 
+            $type = "Photos" 
+        } elseif ($videoextensions -contains $file.Extension.ToLower()) { 
+            $type = "Videos" 
+        } else {
+            $type = "Other" 
+        }
         # Attempt to extract the year from the exif
         try {
             Write-Host "Processing file: $($file.Name)"
@@ -72,27 +91,25 @@ function Invoke-Sort {
             # Access specific EXIF properties (e.g., DateTimeOriginal for date taken)
             Write-Host "Original Time of Create: $( $exifObject.DateTimeOriginal )"
             $year = ($exifObject.DateTimeOriginal).Substring(0, 4)
-            Write-Host "Year extracted: $year"
-            # Move to relevant folder
-            if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $parentDir -ChildPath "$year Videos" } 
-            elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $parentDir -ChildPath "$year Photos" }
+            $targetDir = Get-TargetDir -year $year -type $type
             Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
         } catch {
             # Failed - go to Name Pattern Match
             Write-Host "File does not have System.photo.DateTaken, using Name Pattern Matching: $($file.Name)" -ForegroundColor Cyan
             if ($file.Name -match "(20[0-9]{2})([0][0-9]|[1][0-2])([0-3][0-9])") {
                 $year = $matches[1]
-                Write-Host "Year extracted: $year"
-                # Move to relevant folder
-                if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $parentDir -ChildPath "$year Videos" } 
-                elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $parentDir -ChildPath "$year Photos" }
+                $targetDir = Get-TargetDir -year $year -type $type
                 Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
             } else {
-                Write-Host "File name does not have with a valid year: $($file.FullName)"
-                if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $parentDir -ChildPath "Unclassified Videos" } 
-                elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $parentDir -ChildPath "Unclassified Photos" }
-                else { $targetDir = Join-Path -Path $parentDir -ChildPath "Unclassified" }
-                Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+                try {
+                    $year = ($file.LastWriteTime).Substring(0, 4)
+                    $targetDir = Get-TargetDir -year $year -type $type
+                    Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+                } catch {
+                    Write-Host "File name does not have with a valid year: $($file.FullName)"
+                    $targetDir = Get-TargetDir -year "Unclassified" -type $type
+                    Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+                }
             }
         }
     }
@@ -108,3 +125,11 @@ $parentDir = Split-Path -Path $pwd -Parent
 $files = Get-ChildItem -Path $workingDir -File -Recurse
 
 Invoke-Sort -files $files -parentDir $parentDir
+
+$imagePath = "D:\Pictures - HDD\2. Google Photos Backups\Unclassified Photos\IMG_1889.JPG"
+$file = Get-Item -Path $imagePath
+
+# Get the date taken from the file properties
+$dateTaken = $file.LastWriteTime
+
+Write-Output "Date Taken: $dateTaken"
