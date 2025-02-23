@@ -5,25 +5,24 @@ function Invoke-MoveToYear {
         [string]$year,
         [System.IO.FileInfo]$file
     )
-    sleep 2
+    sleep 1
     # Create the target directory if it doesn't exist
     if (-not (Test-Path -Path $targetDir)) {
-        Write-Output "Creating directory: $targetDir"
+        Write-Host "Creating directory: $targetDir"
         New-Item -Path $targetDir -ItemType Directory | Out-Null
     }
 
     # Move the file to the target directory
     $destination = Join-Path -Path $targetDir -ChildPath $file.Name
-    Write-Output "Moving file to: $destination"
+    Write-Host "Moving file to: $destination"
 
     if (Test-Path -Path $destination) {
-        Write-Output "File already exists at destination: $destination. Skipping move and auto-deleting."
-        Remove-Item -Path $file.FullName -whatif 
-        break
+        Write-Warning "File already exists at destination: $destination. Skipping move and auto-deleting."
+        Remove-Item -Path $file.FullName
     } else {
         # Move the file to the destination
-        Move-Item -Path $file.FullName -Destination $destination -whatif
-        Write-Output "File moved successfully." 
+        Move-Item -Path $file.FullName -Destination $destination
+        Write-Host "$( $file.FullName ) --> moved to $destination" -ForegroundColor Green
     }
 }
 
@@ -39,7 +38,6 @@ function Invoke-Sort {
     $totalextensions = $videoextensions + $photoextensions + $livephotoextensions
     # Loop through each file
     foreach ($file in $files) {
-        echo "$( $file.FullName )"
         echo "$( $file.Extension.ToLower() )"
         #### Guard statements for non-year files
         if (!($totalextensions -contains $file.Extension.ToLower())) {   
@@ -64,30 +62,30 @@ function Invoke-Sort {
         }
         # Attempt to extract the year from the exif
         try {
-            Write-Output "Processing file: $($file.Name)"
+            Write-Host "Processing file: $($file.Name)"
             $exifData = & $exifToolPath -j $file.FullName
             # Convert JSON output to PowerShell object for easier processing
             $exifObject = $exifData | ConvertFrom-Json
             # Access specific EXIF properties (e.g., DateTimeOriginal for date taken)
-            Write-Output "Original Time of Create: $( $exifObject.DateTimeOriginal )"
+            Write-Host "Original Time of Create: $( $exifObject.DateTimeOriginal )"
             $year = ($exifObject.DateTimeOriginal).Substring(0, 4)
-            Write-Output "Year extracted: $year"
+            Write-Host "Year extracted: $year"
             # Move to relevant folder
             if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Videos" } 
             elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Photos" }
             Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
         } catch {
             # Failed - go to Name Pattern Match
-            Write-Warning "File does not have System.photo.DateTaken, using Name Pattern Matching: $($file.Name)"
+            Write-Host "File does not have System.photo.DateTaken, using Name Pattern Matching: $($file.Name)" -ForegroundColor Cyan
             if ($file.Name -match "(20[0-9]{2})([0][0-9]|[1][0-2])([0-3][0-9])") {
                 $year = $matches[1]
-                Write-Output "Year extracted: $year"
+                Write-Host "Year extracted: $year"
                 # Move to relevant folder
                 if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Videos" } 
                 elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Photos" }
                 Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
             } else {
-                Write-Output "File name does not have with a valid year: $($file.FullName)"
+                Write-Host "File name does not have with a valid year: $($file.FullName)"
                 if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified Videos" } 
                 elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified Photos" }
                 else { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified" }
