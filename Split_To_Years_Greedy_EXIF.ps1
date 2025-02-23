@@ -5,7 +5,6 @@ function Invoke-MoveToYear {
         [string]$year,
         [System.IO.FileInfo]$file
     )
-    sleep 1
     # Create the target directory if it doesn't exist
     if (-not (Test-Path -Path $targetDir)) {
         Write-Host "Creating directory: $targetDir"
@@ -38,7 +37,6 @@ function Invoke-Sort {
     $totalextensions = $videoextensions + $photoextensions + $livephotoextensions
     # Loop through each file
     foreach ($file in $files) {
-        echo "$( $file.Extension.ToLower() )"
         #### Guard statements for non-year files
         if (!($totalextensions -contains $file.Extension.ToLower())) {   
             $targetDir = Join-Path -Path $sourceDir -ChildPath "Metadata"
