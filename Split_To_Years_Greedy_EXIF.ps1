@@ -106,7 +106,7 @@ function Invoke-Sort {
                 Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
             } else {
                 try {
-                    $year = ($file.LastWriteTime).Substring(0, 4)
+                    $year = ($file.LastWriteTime).Year
                     $targetDir = Get-TargetDir -year $year -type $type
                     Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
                 } catch {
@@ -129,11 +129,3 @@ $parentDir = Split-Path -Path $pwd -Parent
 $files = Get-ChildItem -Path $workingDir -File -Recurse
 
 Invoke-Sort -files $files -parentDir $parentDir
-
-$imagePath = "D:\Pictures - HDD\2. Google Photos Backups\Unclassified Photos\IMG_1889.JPG"
-$file = Get-Item -Path $imagePath
-
-# Get the date taken from the file properties
-$dateTaken = $file.LastWriteTime
-
-Write-Output "Date Taken: $dateTaken"
