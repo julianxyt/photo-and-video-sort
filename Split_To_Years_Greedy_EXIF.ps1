@@ -5,6 +5,7 @@ function Invoke-MoveToYear {
         [string]$year,
         [System.IO.FileInfo]$file
     )
+    sleep 2
     # Create the target directory if it doesn't exist
     if (-not (Test-Path -Path $targetDir)) {
         Write-Output "Creating directory: $targetDir"
@@ -31,16 +32,23 @@ function Invoke-Sort {
         [string]$sourceDir,
         [System.IO.FileInfo]$file
     )
+    # Define the video file extensions
+    $videoextensions = @('.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv')
+    $photoextensions = @('.jpg', '.jpeg', '.heic', '.png')
+    $livephotoextensions = @('.mp')
+    $totalextensions = $videoextensions + $photoextensions + $livephotoextensions
     # Loop through each file
     foreach ($file in $files) {
+        echo "$( $file.FullName )"
+        echo "$( $file.Extension.ToLower() )"
         #### Guard statements for non-year files
-        if (!($TOTALEXTENSIONS -contains $file.Extension.ToLower())) {         
+        if (!($totalextensions -contains $file.Extension.ToLower())) {   
             $targetDir = Join-Path -Path $sourceDir -ChildPath "Metadata"
             Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
             continue
         }
-        if ($LIVEPHOTOEXTENSIONS -contains $file.Extension.ToLower()) {         
-            $targetDir = Join-Path -Path $sourceDir -ChildPath "Live Photos"
+        if ($livephotoextensions -contains $file.Extension.ToLower()) {         
+            $targetDir = Join-Path -Path $sourceDir -ChildPath "live photos"
             Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
             continue
         }
@@ -65,23 +73,23 @@ function Invoke-Sort {
             $year = ($exifObject.DateTimeOriginal).Substring(0, 4)
             Write-Output "Year extracted: $year"
             # Move to relevant folder
-            if ($VIDEOEXTENSIONS -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Videos" } 
-            elseif ($PHOTOEXTENSIONS -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Photos" }
+            if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year videos" } 
+            elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year photos" }
             Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
         } catch {
             # Failed - go to Name Pattern Match
-            Write-Warning "File does not have System.Photo.DateTaken, using Name Pattern Matching: $($file.Name)"
+            Write-Warning "File does not have System.photo.DateTaken, using Name Pattern Matching: $($file.Name)"
             if ($file.Name -match "(20[0-9]{2})([0][0-9]|[1][0-2])([0-3][0-9])") {
                 $year = $matches[1]
                 Write-Output "Year extracted: $year"
                 # Move to relevant folder
-                if ($VIDEOEXTENSIONS -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Videos" } 
-                elseif ($PHOTOEXTENSIONS -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year Photos" }
+                if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year videos" } 
+                elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "$year photos" }
                 Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
             } else {
                 Write-Output "File name does not have with a valid year: $($file.FullName)"
-                if ($VIDEOEXTENSIONS -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified Videos" } 
-                elseif ($PHOTOEXTENSIONS -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified Photos" }
+                if ($videoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified videos" } 
+                elseif ($photoextensions -contains $file.Extension.ToLower()) { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified photos" }
                 else { $targetDir = Join-Path -Path $sourceDir -ChildPath "Unclassified" }
                 Invoke-MoveToYear -sourceDir $sourceDir -file $file -year $year -targetDir $targetDir
             }
@@ -93,12 +101,6 @@ $env:EXIFTOOLPATH = 'C:\Program Files\exiftool-12.97_64\exiftool.exe'
 # Define the source directory where the images and videos are located
 $workingDir = $pwd
 $sourceDir = Split-Path -Path $pwd -Parent
-
-# Define the video file extensions
-$env:VIDEOEXTENSIONS = @('.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv')
-$env:PHOTOEXTENSIONS = @('.jpg', '.jpeg', '.heic', '.png')
-$env:LIVEPHOTOEXTENSIONS = @('.mp')
-$env:TOTALEXTENSIONS = $VIDEOEXTENSIONS + $PHOTOEXTENSIONS + $LIVEPHOTOEXTENSIONS
 
 # Get all files in the source directory
 #$files = Get-ChildItem -Path $workingDir -File
