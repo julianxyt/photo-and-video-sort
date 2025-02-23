@@ -18,7 +18,7 @@ function Invoke-MoveToYear {
         Write-Warning "File already exists at destination: $destination. Recycling..."
         $move_to = Join-Path -Path "$parentDir\Recycle Bin" -ChildPath $file.Name
         try {
-            Move-Item -Path $file.FullName -Destination $move_to
+            Move-Item -Path $file.FullName -Destination $move_to -ErrorAction Stop
         } catch {
             Remove-Item -Path $file.FullName
         }
