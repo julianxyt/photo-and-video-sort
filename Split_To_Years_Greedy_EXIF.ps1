@@ -10,7 +10,6 @@ function Invoke-MoveToYear {
         Write-Host "Creating directory: $targetDir"
         New-Item -Path $targetDir -ItemType Directory | Out-Null
     }
-    sleep 2
     # Move the file to the target directory
     $destination = Join-Path -Path $targetDir -ChildPath $file.Name
     Write-Host "Moving file to: $destination"
