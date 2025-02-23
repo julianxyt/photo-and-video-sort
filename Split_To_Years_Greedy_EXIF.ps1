@@ -105,15 +105,18 @@ function Invoke-Sort {
                 $targetDir = Get-TargetDir -year $year -type $type
                 Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
             } else {
-                try {
-                    $year = ($file.LastWriteTime).Year
-                    $targetDir = Get-TargetDir -year $year -type $type
-                    Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
-                } catch {
                     Write-Host "File name does not have with a valid year: $($file.FullName)"
                     $targetDir = Get-TargetDir -year "Unclassified" -type $type
                     Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
-                }
+                # try {
+                #     $year = ($file.LastWriteTime).Year
+                #     $targetDir = Get-TargetDir -year $year -type $type
+                #     Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+                # } catch {
+                #     Write-Host "File name does not have with a valid year: $($file.FullName)"
+                #     $targetDir = Get-TargetDir -year "Unclassified" -type $type
+                #     Invoke-MoveToYear -parentDir $parentDir -file $file -year $year -targetDir $targetDir
+                # }
             }
         }
     }
