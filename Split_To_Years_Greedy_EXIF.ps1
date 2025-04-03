@@ -67,8 +67,9 @@ function Invoke-Sort {
     # Define the video file extensions
     $videoextensions = @('.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv')
     $photoextensions = @('.jpg', '.jpeg', '.heic', '.png', '.nef')
+    $rawextensions = @('.raf')
     $livephotoextensions = @('.mp')
-    $totalextensions = $videoextensions + $photoextensions + $livephotoextensions
+    $totalextensions = $videoextensions + $photoextensions + $livephotoextensions + $rawextensions
     if (-not (Test-Path -Path "$housingDir\Recycle Bin")) {
         Write-Host "Creating directory: $housingDir\Recycle Bin"
         New-Item -Path "$housingDir\Recycle Bin" -ItemType Directory | Out-Null
@@ -101,6 +102,8 @@ function Invoke-Sort {
             $type = "Photos" 
         } elseif ($videoextensions -contains $file.Extension.ToLower()) { 
             $type = "Videos" 
+        } elseif ($rawextensions -contains $file.Extension.ToLower()) { 
+            $type = "RAWs" 
         } else {
             $type = "Other" 
         }
@@ -144,8 +147,8 @@ $env:EXIFTOOLPATH = 'C:\Program Files\exiftool-12.97_64\exiftool.exe'
 # Go to the dir where all your photos/videos are
 $unsortedDir = $pwd
 # Define the directory to house the new folder destinations
-$housingDir = Split-Path -Path $pwd -Parent
-# $housingDir = $pwd
+# $housingDir = Split-Path -Path $pwd -Parent
+$housingDir = $pwd
 
 # Get all files in the source directory
 #$files = Get-ChildItem -Path $unsortedDir -File
