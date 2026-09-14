@@ -1,0 +1,10 @@
+# Core - everything swipesort needs to ingest, learn and serve.
+numpy>=1.24
+pillow>=10.0
+fastapi>=0.110
+uvicorn[standard]>=0.27
+
+# Optional, install if you want them:
+#   pillow-heif      read iPhone .HEIC without converting first
+#   open_clip_torch  semantic (CLIP) features instead of the built-in ones
+#   torch            required by open_clip_torch

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>swipesort</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0d10'/%3E%3Cpath d='M9 20l5-6 4 4 3-3 3 5z' fill='%2334c98a'/%3E%3Ccircle cx='12' cy='11' r='2' fill='%23f5b73d'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="bar" id="topbar">
+  <div class="bar-left">
+    <strong id="modeLabel">Learn</strong>
+    <span class="muted" id="queueNote">loading…</span>
+  </div>
+  <div class="bar-right">
+    <button class="chip" id="modeBtn" aria-label="Change ordering">Mode</button>
+    <button class="chip" id="applyBtn" aria-label="Apply decisions">Apply</button>
+  </div>
+</header>
+
+<div class="progress" role="progressbar" aria-label="Triage progress">
+  <div class="progress-fill" id="progressFill"></div>
+</div>
+
+<main id="deck" class="deck" aria-live="polite">
+  <div class="empty" id="empty" hidden>
+    <h2 id="emptyTitle">Nothing left to triage</h2>
+    <p id="emptyBody" class="muted"></p>
+    <button class="btn" id="emptyAction" hidden></button>
+  </div>
+</main>
+
+<div class="toast" id="toast" hidden>
+  <span id="toastText"></span>
+  <button class="toast-btn" id="toastAction" hidden></button>
+</div>
+
+<nav class="actions" aria-label="Decisions">
+  <button class="act act-undo" data-act="undo" aria-label="Undo last swipe">
+    <span class="glyph">↺</span><span class="label">Undo</span>
+  </button>
+  <button class="act act-drop" data-act="drop" aria-label="Bin this">
+    <span class="glyph">✕</span><span class="label">Bin</span>
+  </button>
+  <button class="act act-later" data-act="later" aria-label="Decide later">
+    <span class="glyph">▾</span><span class="label">Later</span>
+  </button>
+  <button class="act act-keep" data-act="keep" aria-label="Keep this">
+    <span class="glyph">✓</span><span class="label">Keep</span>
+  </button>
+  <button class="act act-love" data-act="love" aria-label="Favourite this">
+    <span class="glyph">★</span><span class="label">Love</span>
+  </button>
+</nav>
+
+<dialog class="sheet" id="modeSheet">
+  <h3>Ordering</h3>
+  <ul class="modes" id="modeList"></ul>
+  <label class="row"><input type="checkbox" id="includeLater"> Show items I deferred</label>
+  <h3>Filter</h3>
+  <div class="row">
+    <select id="yearFilter"><option value="">Any year</option></select>
+    <select id="bucketFilter"><option value="">Any type</option></select>
+  </div>
+  <div class="sheet-actions">
+    <button class="btn ghost" data-close>Close</button>
+    <button class="btn" id="modeApply">Use this</button>
+  </div>
+</dialog>
+
+<dialog class="sheet" id="applySheet">
+  <h3>Apply decisions</h3>
+  <p class="muted">
+    Binned files move to <code>_Quarantine/</code> - nothing is deleted, and
+    <code>swipesort undo</code> puts everything back. Keepers are filed into
+    <code>&lt;year&gt; &lt;type&gt;</code> folders.
+  </p>
+  <pre class="preview" id="applyPreview">checking…</pre>
+  <div class="sheet-actions">
+    <button class="btn ghost" data-close>Cancel</button>
+    <button class="btn danger" id="applyConfirm" disabled>Move the files</button>
+  </div>
+</dialog>
+
+<dialog class="sheet" id="statsSheet">
+  <h3>Model</h3>
+  <div id="statsBody" class="stats"></div>
+  <div class="sheet-actions">
+    <button class="btn ghost" data-close>Close</button>
+    <button class="btn" id="trainNow">Retrain now</button>
+  </div>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
