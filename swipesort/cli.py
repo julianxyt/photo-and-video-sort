@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import socket
 import sys
-from pathlib import Path
 
 from . import apply as apply_mod, db, features as feat, ingest, model as model_mod, queue as queue_mod
 from .config import (

@@ -1,7 +1,6 @@
 """End-to-end and unit tests. Run with: python -m unittest discover -s tests"""
 from __future__ import annotations
 
-import io
 import shutil
 import struct
 import sys
@@ -180,7 +179,7 @@ class LibraryTestCase(unittest.TestCase):
     junk = 26
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = Path(tempfile.mkdtemp()).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.manifest = build_library(self.tmp, keepers=self.keepers, junk_count=self.junk)
         self.library = Library.resolve(self.tmp)
@@ -372,7 +371,9 @@ class QueueTests(LibraryTestCase):
         self.conn.commit()
         learn = queue_mod.build(self.conn, mode="learn", limit=8)
         confident = queue_mod.build(self.conn, mode="keepers", limit=8)
-        spread = lambda items: np.mean([abs(i["score"] - 0.5) for i in items])
+        def spread(items):
+            return np.mean([abs(i["score"] - 0.5) for i in items])
+
         self.assertLess(spread(learn), spread(confident))
 
     def test_filters(self):

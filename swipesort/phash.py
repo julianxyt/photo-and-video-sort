@@ -7,7 +7,7 @@ the same doorway that every travel backlog is full of.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import numpy as np
 

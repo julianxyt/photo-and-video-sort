@@ -1,5 +1,7 @@
 # photo-and-video-sort
 
+[![CI](https://github.com/julianxyt/photo-and-video-sort/actions/workflows/ci.yml/badge.svg)](https://github.com/julianxyt/photo-and-video-sort/actions/workflows/ci.yml)
+
 Two generations of the same job: getting a messy photo and video library into
 `<year> <type>` folders without losing anything.
 
@@ -208,16 +210,61 @@ swipesort/
 tests/              55 tests, stdlib unittest, synthetic library fixtures
 ```
 
-Run the tests with:
+### Testing
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -t tests
+python -m unittest discover -s tests -t tests        # all 55
+python -m unittest discover -s tests -t tests -v     # with names
+python -m unittest -v test_swipesort.ApplyTests      # one class
+python -m unittest -v test_swipesort.ApplyTests.test_undo_restores_every_file
 ```
 
-They build a synthetic library on disk and exercise the real pipeline
-end to end - ingest, dedup, train, rank, apply, undo - so they need no photos
-of yours and leave nothing behind.
+(`-s` is where the tests live, `-t` is the import root; both point at `tests/`
+because that is also where `fixtures.py` sits.)
+
+There are no mocks and no committed image files. `tests/fixtures.py` generates a
+synthetic library on disk in a temp directory - bright detailed "keepers", dark
+flat "junk", a five-frame burst, a byte-identical copy, a screenshot, a
+`received_*.jpg`, and a non-media sidecar - and the tests then run the real
+pipeline over it: ingest, dedup, train, rank, apply, undo, and the HTTP API
+through `fastapi.testclient`. Everything is torn down afterwards.
+
+| class | covers |
+|---|---|
+| `ClassifyTests` (5) | the ported bucket rules and their precedence |
+| `HashTests` (3) | dHash distance, clustering, threshold strictness |
+| `CaptureDateTests` (3) | QuickTime `mvhd` parsing, unreadable files, mtime opt-in |
+| `FeatureTests` (3) | fixed width, finite values, sharp vs blurry |
+| `ModelTests` (4) | fitting, regularisation on separable data, JSON round trip, AUC edges |
+| `IngestTests` (7) | indexing, incremental rescan, duplicates, missing files |
+| `ModelOnLibraryTests` (3) | it beats the baseline, and refuses to train when it should |
+| `QueueTests` (9) | all four orderings, filters, deferral, group cohesion |
+| `ApplyTests` (9) | dry runs, quarantine, undo, name collisions, pruning |
+| `ApiTests` (9) | every endpoint, plus rejection of bad input |
+
+The ones worth knowing about, because they encode promises rather than
+behaviour: `test_dry_run_moves_nothing`, `test_undo_restores_every_file` (which
+snapshots every path before and after and demands they match), and
+`test_same_name_different_content_keeps_both`.
+
+A full run takes about 50 seconds; most of that is generating and decoding the
+fixture images.
+
+### CI
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request:
+
+* **ruff** over `swipesort/` and `tests/`, pinned to an exact version so a new
+  linter release cannot turn the build red on its own.
+* **the test suite** on Python 3.10 and 3.12, on both Ubuntu and Windows.
+  Windows is in the matrix deliberately - this tool is aimed at a library
+  sitting on a Windows PC, and paths, moves and file locking are exactly what
+  behaves differently there.
+* **a CLI smoke test** that builds a fixture library and drives `ingest`,
+  `stats`, `queue` and `apply` through the actual command line, then asserts
+  that `apply` without `--confirm` moved nothing. The unit tests go through the
+  Python API; this catches a broken entry point or argument that they would not.
 
 ## Requirements and limits
 

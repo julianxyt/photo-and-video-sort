@@ -13,7 +13,6 @@ import os
 import shutil
 import sqlite3
 import subprocess
-from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
