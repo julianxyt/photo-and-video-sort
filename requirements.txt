@@ -3,8 +3,14 @@ numpy>=1.24
 pillow>=10.0
 fastapi>=0.110
 uvicorn[standard]>=0.27
+rawpy>=0.21          # RAW files (.raf .nef .arw .cr2 .dng ...): previews and capture dates
 
 # Optional, install if you want them:
 #   pillow-heif      read iPhone .HEIC without converting first
 #   open_clip_torch  semantic (CLIP) features instead of the built-in ones
 #   torch            required by open_clip_torch
+#
+# Not a pip package, but needed for the model to see inside videos:
+#   ffmpeg           Windows: winget install --id Gyan.FFmpeg
+#                    macOS:   brew install ffmpeg
+#                    Linux:   sudo apt install ffmpeg

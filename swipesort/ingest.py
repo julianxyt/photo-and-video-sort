@@ -13,6 +13,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
@@ -27,6 +28,7 @@ from .config import (
     PHASH_HAMMING_THRESHOLD,
     THUMB_MAX_EDGE,
     THUMB_QUALITY,
+    ffmpeg_path,
 )
 
 Progress = Callable[[str, int, int], None]
@@ -41,9 +43,11 @@ class IngestReport:
     missing: int = 0
     thumbs: int = 0
     featured: int = 0
+    undecoded: int = 0
     exact_duplicates: int = 0
     duplicate_bytes: int = 0
     near_duplicate_groups: int = 0
+    gaps: list["DecodeGap"] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -158,6 +162,7 @@ def scan(
 
     report.exact_duplicates, report.duplicate_bytes = find_exact_duplicates(conn)
     report.near_duplicate_groups = group_near_duplicates(conn, dup_threshold)
+    report.gaps = decode_gaps(conn)
     db.set_meta(conn, "last_scan", db.utcnow())
     db.set_meta(conn, "feat_kind", extractor.kind)
     conn.commit()
@@ -237,12 +242,19 @@ def _process_media(conn, library, extractor, pending, report: IngestReport, prog
         for media_id, result in pool.map(work, pending):
             done += 1
             if result is None:
-                report.errors.append(f"could not decode: {media_id}")
+                # Clear anything left from an earlier successful decode, so a
+                # file replaced by an unreadable one does not keep stale pixels.
+                conn.execute(
+                    "UPDATE media SET thumb=NULL, phash=NULL, features=NULL, "
+                    "feat_kind=NULL WHERE id=?",
+                    (media_id,),
+                )
+                report.undecoded += 1
             else:
                 thumb, value, vector, size = result
                 conn.execute(
                     "UPDATE media SET thumb=?, phash=?, features=?, feat_kind=?, "
-                    "width=COALESCE(width,?), height=COALESCE(height,?) WHERE id=?",
+                    "width=COALESCE(?, width), height=COALESCE(?, height) WHERE id=?",
                     (thumb, value, feat.pack(vector) if vector is not None else None,
                      extractor.kind if vector is not None else None,
                      size[0] if size else None, size[1] if size else None, media_id),
@@ -261,24 +273,16 @@ def _process_media(conn, library, extractor, pending, report: IngestReport, prog
 
 
 def _thumb_hash_features(library: Library, path: Path, extractor):
-    """Decode once; return (thumb name, phash, feature vector, (w, h))."""
+    """Decode once; return (thumb name, phash, feature vector, (w, h)), or None."""
     from PIL import Image
 
-    thumb_name = _thumb_name(path)
-    thumb_path = library.thumb_dir / thumb_name
-    size = None
-
+    opened = feat.open_media_image(path, max_edge=THUMB_MAX_EDGE)
+    if opened is None:
+        return None
+    image, size = opened
     try:
-        if path.suffix.lower() in classify.VIDEO_EXTS:
-            image = feat._video_frame(path)
-            if image is None:
-                return thumb_name if thumb_path.exists() else None, None, None, None
-        else:
-            image = Image.open(path)
-            image.draft("RGB", (THUMB_MAX_EDGE, THUMB_MAX_EDGE))
-            image = image.convert("RGB")
-        size = image.size
-
+        thumb_name = _thumb_name(path)
+        thumb_path = library.thumb_dir / thumb_name
         preview = image.copy()
         preview.thumbnail((THUMB_MAX_EDGE, THUMB_MAX_EDGE), Image.LANCZOS)
         thumb_path.parent.mkdir(parents=True, exist_ok=True)
@@ -288,18 +292,91 @@ def _thumb_hash_features(library: Library, path: Path, extractor):
             image.resize((FEATURE_IMAGE_SIZE, FEATURE_IMAGE_SIZE), Image.BILINEAR),
             dtype=np.float32,
         ) / 255.0
-        gray = feat.to_gray(small)
-        value = phash.dhash(gray)
+        value = phash.dhash(feat.to_gray(small))
         vector = extractor.extract(small)
-        image.close()
         return thumb_name, value, vector, size
     except Exception:
         return None
+    finally:
+        image.close()
 
 
 def _thumb_name(path: Path) -> str:
     digest = hashlib.sha1(str(path).encode("utf-8")).hexdigest()
     return f"{digest[:2]}/{digest}.jpg"
+
+
+# --------------------------------------------------------------------------- #
+# Files that could not be previewed
+# --------------------------------------------------------------------------- #
+
+FFMPEG_INSTALL = (
+    "  Windows  winget install --id Gyan.FFmpeg\n"
+    "  macOS    brew install ffmpeg\n"
+    "  Linux    sudo apt install ffmpeg"
+)
+
+
+@dataclass
+class DecodeGap:
+    """A group of indexed files that have no preview and no image features."""
+
+    kind: str       # video / heic / raw / photo / live
+    label: str      # "video" / "videos", "HEIC photo" / "HEIC photos", ...
+    count: int
+    fix: str        # what to do about it, given what is installed right now;
+                    # may run to several lines
+
+
+def decode_gaps(conn: sqlite3.Connection) -> list[DecodeGap]:
+    """What could not be previewed, grouped by why, with the fix for each.
+
+    Swipes on these files still train the model, from metadata alone, so this
+    is not an error - but the model learns far more when it can see the picture,
+    and the fix is usually one install away.
+    """
+    rows = conn.execute(
+        "SELECT kind, ext, COUNT(*) AS n FROM media "
+        "WHERE features IS NULL AND missing=0 AND exact_dup_of IS NULL "
+        "GROUP BY kind, ext"
+    ).fetchall()
+    counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        if row["kind"] == "video":
+            counts["video"] += row["n"]
+        elif row["ext"] in (".heic", ".heif"):
+            counts["heic"] += row["n"]
+        elif row["kind"] == "raw":
+            counts["raw"] += row["n"]
+        elif row["kind"] == "live":
+            counts["live"] += row["n"]
+        else:
+            counts["photo"] += row["n"]
+
+    fixes = {
+        "video": ("video",
+                  f"install ffmpeg, then re-run ingest:\n{FFMPEG_INSTALL}"
+                  if not ffmpeg_path() else
+                  "ffmpeg could not read them - corrupt files, or a codec it lacks"),
+        "heic": ("HEIC photo",
+                 "pip install pillow-heif, then re-run ingest"
+                 if not feat.HEIF_AVAILABLE else
+                 "pillow-heif could not read them - likely corrupt"),
+        "raw": ("RAW file",
+                "pip install rawpy, then re-run ingest"
+                if not feat.rawpy_available() else
+                "rawpy could not decode them - a camera newer than its LibRaw, or corrupt"),
+        "live": ("Live/Motion Photo clip", "not previewed yet - still indexed and sortable"),
+        "photo": ("photo", "could not be decoded - likely corrupt or truncated"),
+    }
+    order = ["video", "heic", "raw", "photo", "live"]
+    gaps = []
+    for kind in order:
+        count = counts.get(kind, 0)
+        if count:
+            label, fix = fixes[kind]
+            gaps.append(DecodeGap(kind, label if count == 1 else label + "s", count, fix))
+    return gaps
 
 
 # --------------------------------------------------------------------------- #

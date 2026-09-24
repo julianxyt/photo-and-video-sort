@@ -128,6 +128,19 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
   pointer-events: none;
 }
 
+.no-preview {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  text-align: center;
+  padding: 24px;
+  max-width: 320px;
+  font-size: 13.5px;
+}
+.no-preview strong { font-size: 17px; }
+/* Long camera filenames may break anywhere; the sentence must not. */
+.no-preview .filename { overflow-wrap: anywhere; }
+
 .meta {
   flex: none;
   padding: 10px 12px calc(10px + 2px);

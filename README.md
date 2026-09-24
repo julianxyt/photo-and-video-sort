@@ -38,7 +38,9 @@ Every ~15 swipes the model retrains and re-ranks what it shows you next.
 ### Getting started
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt          # includes rawpy, for RAW files
+pip install pillow-heif                  # if you have iPhone .HEIC photos
+winget install --id Gyan.FFmpeg          # if you want the model to see inside videos
 
 # 1. Index the library. Reads EXIF, builds thumbnails, hashes for duplicates,
 #    extracts features. Safe to re-run; it only does new or changed files.
@@ -55,6 +57,29 @@ python -m swipesort apply --library "D:\Photos\Unsorted" --confirm
 ```
 
 Set `SWIPESORT_LIBRARY` once and you can drop the `--library` flag.
+
+### What each kind of file needs
+
+| your files | needs | what the model learns from |
+|---|---|---|
+| JPEG, PNG, WebP, TIFF | nothing extra | the picture and its metadata |
+| RAW (`.raf` `.nef` `.arw` `.cr2` `.dng` ...) | `rawpy` (in `requirements.txt`) | the camera's embedded preview and its metadata |
+| iPhone HEIC | `pip install pillow-heif` | the picture and its metadata |
+| Videos | ffmpeg on `PATH` | one frame from ~2 s in, plus length, size and date |
+
+**A file that cannot be previewed still counts.** You can swipe on it, and that
+swipe still trains the model - on metadata alone (size, date, length, type).
+`ingest` and `stats` list anything in that state, grouped by why, with the
+install that fixes it; re-running `ingest` afterwards picks those files up. In
+the app such cards say "No preview" and carry a "metadata only" badge. On an
+iPhone, Safari can often display a HEIC the computer could not decode, so the
+app tries the original file before giving up.
+
+RAW files are read through the JPEG preview the camera embeds in them - what the
+camera's own screen showed, film simulation and all - which is far faster than
+developing the sensor data. The same preview carries the camera's EXIF, so RAW
+capture dates work without exiftool. That matters for Fuji: `DSCF1234.RAF` has
+no date in its name, so before this every RAF landed in `Unclassified RAWs`.
 
 ### Nothing is ever deleted
 
@@ -86,7 +111,10 @@ confident that it hides something you wanted.
 | `clip` | CLIP ViT-B/32 embeddings - semantic, so it can learn "mountains yes, whiteboards no" | `pip install open_clip_torch torch` |
 
 Both get metadata appended: file size, media type, time of day, month, whether
-it is a screenshot, how many near-identical siblings it has, and resolution.
+it is a screenshot, how many near-identical siblings it has, resolution, and
+whether there was a picture to look at at all. For a file with no preview, the
+image columns are filled with the training average - which contributes nothing -
+and that last flag lets the model learn how such files differ on their own.
 `classic` is very good at the statistical half of storage cleaning (blurry,
 dark, badly framed). `clip` is better at subject matter, at the cost of a
 ~2 GB install. Pick with `ingest --backend clip`; switching re-extracts, since
@@ -160,8 +188,9 @@ a photo:
 4. name starts with `FB` or `received` → `Facebook`
 5. otherwise `<year> Photos` / `<year> Videos` / `<year> RAWs`
 
-Year detection follows the same preference: EXIF `DateTimeOriginal` first, then
-a `YYYYMMDD` run in the filename, then `Unclassified`. Last-write-time stays
+Year detection follows the same preference: EXIF `DateTimeOriginal` first
+(for RAW files, read from the embedded preview), then a `YYYYMMDD` run in the
+filename, then `Unclassified`. Last-write-time stays
 unused unless you pass `--use-mtime`, per the *"no lastwritetime as its
 unreliable"* commit.
 
@@ -172,8 +201,12 @@ Four deliberate changes:
 * **EXIF actually runs.** The PowerShell script set `$env:EXIFTOOLPATH` but
   called `& $exifToolPath`, an unassigned variable, so the exiftool call threw
   on every file and silently fell through to filename matching. swipesort reads
-  EXIF via Pillow, parses MP4/MOV creation time straight out of the container,
-  and falls back to exiftool for RAW files when it is installed. It looks at
+  EXIF via Pillow - `DateTimeOriginal`, the moment the shutter fired, not the
+  `DateTime` field beside it, which is when the file was last *modified* and
+  would file an edited photo under the year it was edited. It parses MP4/MOV
+  creation time straight out of the container, reads RAW dates from the
+  camera's embedded preview via rawpy, and falls back to exiftool when it is
+  installed. It looks at
   `$SWIPESORT_EXIFTOOL`, then `PATH`, then
   `C:\Program Files\exiftool-12.97_64\exiftool.exe` - the path the scripts
   assumed.
@@ -214,7 +247,7 @@ tests/              55 tests, stdlib unittest, synthetic library fixtures
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -t tests                   # all 57
+python -m unittest discover -s tests -t tests                   # all 81
 python -m unittest discover -s tests -t tests -v                # with names
 python -m unittest discover -s tests -t tests -k ApplyTests     # one class
 python -m unittest discover -s tests -t tests -k test_undo_restores_every_file
@@ -225,10 +258,13 @@ because that is also where `fixtures.py` sits. Use `-k` to narrow rather than
 naming `test_swipesort.SomeClass` directly - that form only resolves from
 inside `tests/`.)
 
-There are no mocks and no committed image files. `tests/fixtures.py` generates a
+There are no committed image files, and no mocks beyond pretending a tool is or
+is not installed. `tests/fixtures.py` generates a
 synthetic library on disk in a temp directory - bright detailed "keepers", dark
 flat "junk", a five-frame burst, a byte-identical copy, a screenshot, a
-`received_*.jpg`, and a non-media sidecar - and the tests then run the real
+`received_*.jpg`, and a non-media sidecar. It can also write a real DNG (RAW)
+file, with or without an embedded preview, and a minimal MP4 with no video
+stream. The tests then run the real
 pipeline over it: ingest, dedup, train, rank, apply, undo, and the HTTP API
 through `fastapi.testclient`. Everything is torn down afterwards.
 
@@ -236,14 +272,17 @@ through `fastapi.testclient`. Everything is torn down afterwards.
 |---|---|
 | `ClassifyTests` (5) | the ported bucket rules and their precedence |
 | `HashTests` (3) | dHash distance, clustering, threshold strictness |
-| `CaptureDateTests` (3) | QuickTime `mvhd` parsing, unreadable files, mtime opt-in |
+| `CaptureDateTests` (6) | date taken vs date modified, QuickTime `mvhd`, timestamp formats, mtime opt-in |
+| `ImageLoadingTests` (3) | EXIF orientation, true size under reduced-scale decoding |
+| `RawTests` (8) | real LibRaw decoding of generated DNGs: embedded preview, full demosaic, preview dates, LibRaw's 1970 placeholder, running without rawpy |
 | `FeatureTests` (3) | fixed width, finite values, sharp vs blurry |
-| `ModelTests` (4) | fitting, regularisation on separable data, JSON round trip, AUC edges |
+| `ModelTests` (6) | fitting, regularisation, imputation of missing image columns, JSON round trip, AUC edges |
+| `MetadataOnlyTests` (7) | swipes on unpreviewable files train and score; a library with no previews at all; two backends' vectors at once; the ingest report and its fixes |
 | `IngestTests` (9) | indexing, incremental rescan, duplicates, missing files, walk order |
 | `ModelOnLibraryTests` (3) | it beats the baseline, and refuses to train when it should |
 | `QueueTests` (9) | all four orderings, filters, deferral, group cohesion |
 | `ApplyTests` (9) | dry runs, quarantine, undo, name collisions, pruning |
-| `ApiTests` (9) | every endpoint, plus rejection of bad input |
+| `ApiTests` (10) | every endpoint, plus rejection of bad input |
 
 The ones worth knowing about, because they encode promises rather than
 behaviour: `test_dry_run_moves_nothing`, `test_undo_restores_every_file` (which
@@ -279,11 +318,19 @@ fixture images.
 ## Requirements and limits
 
 * Python 3.10+.
-* **Videos** need `ffmpeg` on `PATH` for thumbnails and features, and `ffprobe`
-  for dimensions and duration. Without them videos are still indexed and
-  sortable, just judged on metadata alone.
-* **HEIC** needs `pip install pillow-heif`.
-* **RAW** files are indexed and sorted, but their thumbnails depend on Pillow
-  being able to read an embedded preview; some formats will not render.
+* See [What each kind of file needs](#what-each-kind-of-file-needs). In short:
+  videos want ffmpeg (and `ffprobe`, which ships with it, for length and
+  resolution); HEIC wants `pillow-heif`. Without them those files are still
+  indexed, sortable and trainable, but the model learns only their metadata.
+* **Even with ffmpeg, a video is thinly represented** - one frame plus its
+  length and size. It is enough to tell a pocket recording from a sunset, not to
+  judge a whole clip.
+* **RAW support has been tested on DNG, not on a real RAF.** Both go through the
+  same rawpy calls, and the tests decode a generated DNG through real LibRaw on
+  Windows and Linux, but no camera RAF is in the repository. LibRaw's Fuji
+  support is mature; if a new body is too recent for it, those files show up in
+  the `ingest` report rather than failing silently.
+* **One model per library.** Training does not carry across folders - to share
+  one model across every trip, point `--library` at the folder containing them.
 * The model learns *your* taste from *your* swipes. It starts as a coin flip and
   needs roughly 25 swipes before it says anything at all.

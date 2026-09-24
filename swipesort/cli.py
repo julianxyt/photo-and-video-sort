@@ -12,7 +12,6 @@ from .config import (
     Library,
     PHASH_HAMMING_THRESHOLD,
     exiftool_path,
-    ffmpeg_path,
 )
 
 
@@ -37,13 +36,6 @@ def cmd_ingest(args) -> int:
     print(f"library: {library.root}")
     backend = feat.get_extractor(args.backend)
     print(f"features: {backend.kind}")
-    if not ffmpeg_path():
-        print("  note: ffmpeg not found - videos get metadata only, no thumbnail or features")
-    if not exiftool_path():
-        print("  note: exiftool not found - RAW capture dates fall back to the filename")
-        print("        (the bundled zip unpacks as 'exiftool(-k).exe'; rename it to "
-              "'exiftool.exe' -")
-        print("         the (-k) build waits for a keypress before exiting and would hang here)")
     report = ingest.scan(
         library,
         use_mtime=args.use_mtime,
@@ -53,11 +45,39 @@ def cmd_ingest(args) -> int:
         progress=None if args.quiet else _progress,
     )
     print(report.summary())
+    conn = db.connect(library.db_path)
+    _print_gaps(report.gaps, conn)
+    conn.close()
     if report.errors:
         print(f"{len(report.errors)} error(s); first few:")
         for line in report.errors[:5]:
             print(f"  {line}")
     return 0
+
+
+def _print_gaps(gaps, conn, *, brief: bool = False) -> None:
+    """Explain files that could not be previewed, and anything left undated."""
+    if gaps:
+        if brief:
+            print("\nno preview (trained on metadata only)")
+        else:
+            print("\nSome files could not be previewed. You can still swipe on them, and")
+            print("those swipes still train the model - but only on metadata (size, date,")
+            print("length), not on what the picture looks like:")
+        for gap in gaps:
+            first, *rest = gap.fix.splitlines()
+            print(f"  {gap.count:>7,} {gap.label:<24} {first}")
+            for line in rest:
+                print(f"  {'':>7} {'':<24} {line}")
+
+    undated_raw = conn.execute(
+        "SELECT COUNT(*) FROM media WHERE kind='raw' AND year IS NULL AND missing=0"
+    ).fetchone()[0]
+    if undated_raw and not exiftool_path():
+        print(f"\n  {undated_raw:,} RAW file(s) have no capture date, so they will be filed")
+        print("  under 'Unclassified RAWs'. Installing exiftool usually fixes this. If you")
+        print("  use the zip in this repo, rename 'exiftool(-k).exe' to 'exiftool.exe' -")
+        print("  the (-k) build waits for a keypress before exiting and would hang here.")
 
 
 def cmd_stats(args) -> int:
@@ -80,6 +100,8 @@ def cmd_stats(args) -> int:
         base = report.get("baseline_accuracy")
         print("\nmodel")
         print(f"  trained on       {report['n_labels']:>8,} labels ({report['n_positive']} keep)")
+        if report.get("n_without_image"):
+            print(f"    metadata only  {report['n_without_image']:>8,} (no preview available)")
         print(f"  features         {report['n_features']:>8,} ({report['feat_kind']})")
         if acc is not None:
             gain = f", baseline {base:.0%}" if base is not None else ""
@@ -88,6 +110,7 @@ def cmd_stats(args) -> int:
             print(f"  holdout AUC      {auc:>8.2f}")
     else:
         print("\nmodel: not trained yet")
+    _print_gaps(ingest.decode_gaps(conn), conn, brief=True)
     conn.close()
     return 0
 
@@ -103,6 +126,8 @@ def cmd_train(args) -> int:
     scored = model_mod.score_all(conn)
     print(f"trained on {report.n_labels} labels ({report.n_positive} keep), "
           f"{report.n_features} features [{report.feat_kind}]")
+    if report.n_without_image:
+        print(f"{report.n_without_image} of those had no preview and taught it from metadata only")
     if report.holdout_accuracy is not None:
         baseline = f" (baseline {report.baseline_accuracy:.0%})" if report.baseline_accuracy else ""
         print(f"holdout accuracy {report.holdout_accuracy:.0%}{baseline}, "

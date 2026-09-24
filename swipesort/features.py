@@ -24,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import FEATURE_IMAGE_SIZE, ffmpeg_path
+from .config import ffmpeg_path
 
 CLASSIC_KIND = "classic-v1"
 CLIP_KIND = "clip-vitb32"
@@ -34,46 +34,139 @@ CLIP_KIND = "clip-vitb32"
 # Image loading
 # --------------------------------------------------------------------------- #
 
-def _register_heif() -> None:
+def _register_heif() -> bool:
     try:
         import pillow_heif  # type: ignore
 
         pillow_heif.register_heif_opener()
+        return True
     except Exception:
-        pass
+        return False
 
 
-_register_heif()
+HEIF_AVAILABLE = _register_heif()
 
 
-def load_image(path: Path, size: int = FEATURE_IMAGE_SIZE) -> np.ndarray | None:
-    """Load any supported media as an RGB float array in [0, 1], ``size`` square.
-
-    Videos are represented by a frame from a third of the way in, which dodges
-    the black fade most clips open with.
-    """
-    from .classify import VIDEO_EXTS
-
-    if path.suffix.lower() in VIDEO_EXTS:
-        frame = _video_frame(path)
-        if frame is None:
-            return None
-        return _to_array(frame, size)
+def rawpy_available() -> bool:
     try:
-        from PIL import Image
+        import rawpy  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
-        with Image.open(path) as img:
-            img.draft("RGB", (size * 2, size * 2))  # fast JPEG downscale
-            return _to_array(img.convert("RGB"), size)
+
+# EXIF orientations that turn the picture a quarter turn, swapping width/height.
+_QUARTER_TURNS = {5, 6, 7, 8}
+
+
+def open_media_image(path: Path, max_edge: int | None = None):
+    """Open any supported file as ``(upright RGB Pillow image, (width, height))``.
+
+    Returns None when the file cannot be turned into pixels. This is the single
+    place every file becomes pixels, so thumbnails, hashes and features always
+    agree on what a file looks like:
+
+    * videos - a frame from ffmpeg (None without it)
+    * RAW    - the camera's embedded JPEG preview via rawpy, else a full decode
+    * others - Pillow, with HEIC support when pillow-heif is installed
+
+    ``max_edge`` lets JPEG decoding skip resolution that will be thrown away.
+    The returned size is the file's true upright resolution regardless - the
+    image itself may be smaller. EXIF orientation is applied, so a portrait
+    phone photo stored sideways comes out the right way up.
+    """
+    from PIL import Image, ImageOps
+
+    from .classify import RAW_EXTS, VIDEO_EXTS
+
+    ext = path.suffix.lower()
+    try:
+        if ext in VIDEO_EXTS:
+            image = _video_frame(path)
+            if image is None:
+                return None
+            return ImageOps.exif_transpose(image).convert("RGB"), image.size
+        if ext in RAW_EXTS:
+            opened = _open_raw(path, max_edge)
+            if opened is None:
+                return None
+            image, size = opened
+            return ImageOps.exif_transpose(image).convert("RGB"), size
+        # Closed deterministically: on Windows an open handle stops `apply`
+        # from moving the file, and garbage collection is not a guarantee.
+        with Image.open(path) as image:
+            size = image.size  # before draft() shrinks it
+            if max_edge:
+                image.draft("RGB", (max_edge, max_edge))
+            if image.getexif().get(0x0112) in _QUARTER_TURNS:
+                size = (size[1], size[0])
+            return ImageOps.exif_transpose(image).convert("RGB"), size
     except Exception:
         return None
 
 
-def _to_array(img, size: int) -> np.ndarray:
+def raw_preview_jpeg(path: Path) -> bytes | None:
+    """The JPEG a camera embeds inside its RAW file, if it has one.
+
+    Almost every camera writes one (Fuji RAFs always do) - it is what the
+    camera's own screen shows, with the film simulation applied. It is far
+    cheaper than demosaicing the sensor data, and it carries the camera's EXIF.
+    """
+    try:
+        import rawpy
+    except ImportError:
+        return None
+    try:
+        with rawpy.imread(str(path)) as raw:
+            thumb = raw.extract_thumb()
+    except Exception:
+        return None
+    if thumb.format == rawpy.ThumbFormat.JPEG:
+        return bytes(thumb.data)
+    return None
+
+
+def _open_raw(path: Path, max_edge: int | None):
+    """Decode a RAW file to ``(image, true upright size)``.
+
+    Embedded preview first, half-size demosaic as the fallback. Returns None
+    when rawpy is not installed: Pillow can open some TIFF-based RAW formats,
+    but what it sees is the undemosaiced sensor mosaic, and features computed
+    from that would be confidently wrong - worse than none.
+    """
+    import io
+
     from PIL import Image
 
-    resized = img.convert("RGB").resize((size, size), Image.BILINEAR)
-    return np.asarray(resized, dtype=np.float32) / 255.0
+    try:
+        import rawpy
+    except ImportError:
+        return None
+
+    with rawpy.imread(str(path)) as raw:
+        # LibRaw reports the sensor's output size and how the camera was held;
+        # flips 5 and 6 are the quarter turns.
+        sizes = raw.sizes
+        size = (sizes.width, sizes.height)
+        if sizes.flip in (5, 6):
+            size = (size[1], size[0])
+        try:
+            thumb = raw.extract_thumb()
+        except (rawpy.LibRawNoThumbnailError, rawpy.LibRawUnsupportedThumbnailError):
+            thumb = None
+        if thumb is not None and thumb.format == rawpy.ThumbFormat.JPEG:
+            image = Image.open(io.BytesIO(bytes(thumb.data)))
+            if max_edge:
+                image.draft("RGB", (max_edge, max_edge))
+            image.load()
+            return image, size
+        if thumb is not None and thumb.format == rawpy.ThumbFormat.BITMAP:
+            return Image.fromarray(thumb.data), size
+        # No usable preview: demosaic at half resolution, which is plenty for a
+        # 720px thumbnail and several times faster than a full-size decode.
+        # postprocess() applies the camera orientation itself.
+        rgb = raw.postprocess(half_size=True, use_camera_wb=True)
+    return Image.fromarray(rgb), size
 
 
 def _video_frame(path: Path):

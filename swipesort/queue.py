@@ -145,6 +145,8 @@ def _present(row: sqlite3.Row, group_sizes: dict[int, int], rank: int) -> dict[s
         "dup_group": gid,
         "dup_group_size": group_sizes.get(gid, 1) if gid is not None else 1,
         "deferred": row["action"] == "later" if "action" in row.keys() else False,
+        "has_thumb": row["thumb"] is not None,
+        "has_features": row["features"] is not None,
         "thumb_url": f"/thumb/{row['id']}",
         "media_url": f"/media/{row['id']}",
         "target_folder": _target(row),

@@ -8,12 +8,20 @@ these sizes and needs no learning-rate tuning.
 
 Labels: ``love`` and ``keep`` are positives (love counts double), ``drop`` is
 the negative, ``later`` is not a label at all.
+
+Files with no image features - a video without ffmpeg, a HEIC without
+pillow-heif, anything that would not decode - are still trained on and scored,
+using their metadata alone. Their image columns are filled with the training
+mean, which standardises to exactly zero, so those columns contribute nothing
+for that row; a ``has_image`` indicator lets the model learn how such files
+differ on their own. This is ordinary mean imputation with a missingness flag.
 """
 from __future__ import annotations
 
 import json
 import math
 import sqlite3
+import warnings
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Any, Sequence
@@ -31,7 +39,7 @@ META_FEATURE_NAMES = (
     "log_size", "is_video", "is_raw", "is_live", "is_screenshot", "is_facebook",
     "is_metadata", "log_duration", "hour_sin", "hour_cos", "month_sin",
     "month_cos", "has_date", "log_dup_group", "in_dup_group", "log_pixels",
-    "aspect",
+    "aspect", "has_image",
 )
 
 
@@ -86,15 +94,48 @@ def meta_features(row: Any, dup_sizes: dict[int, int] | None = None) -> np.ndarr
         1.0 if group_size > 1 else 0.0,
         math.log1p(width * height) / 20.0,
         (width / height) if height else 0.0,
+        1.0 if field("features") is not None else 0.0,
     ], dtype=np.float32)
 
 
-def row_vector(row: Any, dup_sizes: dict[int, int] | None = None) -> np.ndarray | None:
-    """Image features concatenated with metadata features."""
+def row_vector(row: Any, dup_sizes: dict[int, int] | None = None,
+               image_dim: int = 0) -> np.ndarray:
+    """Image features (``image_dim`` wide) followed by metadata features.
+
+    A row with no image features - or ones of a different width, left over
+    from another backend - gets NaNs in the image columns. The model imputes
+    them; see the module docstring.
+    """
     blob = row["features"] if isinstance(row, sqlite3.Row) else row.get("features")
-    if blob is None:
-        return None
-    return np.concatenate([unpack(blob), meta_features(row, dup_sizes)])
+    image = unpack(blob) if blob is not None else None
+    usable = image is not None and image.size == image_dim and image_dim > 0
+    if not usable:
+        image = np.full(image_dim, np.nan, dtype=np.float32)
+    meta = meta_features(row, dup_sizes)
+    # has_image (the last metadata column) must say whether the image columns
+    # are real, which only this function knows: a vector from another backend
+    # is present in the database but not usable here.
+    meta[-1] = 1.0 if usable else 0.0
+    return np.concatenate([image, meta])
+
+
+def image_width(conn: sqlite3.Connection) -> int:
+    """Width of the library's image feature vectors; 0 if none have any yet.
+
+    If two backends' vectors are both present - say a partial
+    ``ingest --backend clip`` over a classic library - the more common width
+    wins and the rest are treated as having no preview until the next ingest
+    re-extracts them. Refusing to train instead would fail every retrain, and
+    retraining happens inside the swipe request.
+    """
+    # Not aliased "width": media has a width column (pixels), and SQLite
+    # resolves GROUP BY names against table columns before result aliases.
+    top = conn.execute(
+        "SELECT length(features) / 4 AS dims, COUNT(*) AS n FROM media "
+        "WHERE features IS NOT NULL AND missing=0 "
+        "GROUP BY dims ORDER BY n DESC, dims DESC LIMIT 1"
+    ).fetchone()
+    return int(top["dims"]) if top else 0
 
 
 def dup_group_sizes(conn: sqlite3.Connection) -> dict[int, int]:
@@ -115,6 +156,7 @@ def dup_group_sizes(conn: sqlite3.Connection) -> dict[int, int]:
 class TrainReport:
     n_labels: int
     n_positive: int
+    n_without_image: int
     n_features: int
     feat_kind: str
     holdout_accuracy: float | None
@@ -154,7 +196,14 @@ class PreferenceModel:
         y = np.asarray(y, dtype=np.float64)
         w = np.ones_like(y) if sample_weight is None else np.asarray(sample_weight, float)
 
-        mean = X.mean(axis=0)
+        # Columns that are NaN for some rows (image features of files with no
+        # preview) are imputed with the mean of the rows that do have them. A
+        # column with no observed values at all has nothing to learn from.
+        with np.errstate(invalid="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            mean = np.nanmean(X, axis=0)
+        mean = np.where(np.isnan(mean), 0.0, mean)
+        X = np.where(np.isnan(X), mean, X)
         scale = X.std(axis=0)
         scale[scale < 1e-6] = 1.0
         Z = np.hstack([(X - mean) / scale, np.ones((X.shape[0], 1))])
@@ -183,6 +232,7 @@ class PreferenceModel:
     def predict(self, X: np.ndarray) -> np.ndarray:
         """P(keep) for each row of X."""
         X = np.atleast_2d(np.asarray(X, dtype=np.float64))
+        X = np.where(np.isnan(X), self.mean, X)
         Z = (X - self.mean) / self.scale
         return _sigmoid(Z @ self.weights + self.bias)
 
@@ -248,25 +298,15 @@ def train(conn: sqlite3.Connection, *, l2: float = 1.0, seed: int = 0) -> TrainR
         return None
 
     sizes = dup_group_sizes(conn)
+    image_dim = image_width(conn)
     feat_kinds = {r["feat_kind"] for r in rows if r["feat_kind"]}
     vectors, labels, weights = [], [], []
+    without_image = 0
     for row in rows:
-        vec = row_vector(row, sizes)
-        if vec is None:
-            continue
-        vectors.append(vec)
+        vectors.append(row_vector(row, sizes, image_dim))
         labels.append(1.0 if row["action"] in POSITIVE_ACTIONS else 0.0)
         weights.append(LABEL_WEIGHTS.get(row["action"], 1.0))
-
-    if len(vectors) < MIN_LABELS_TO_PREDICT:
-        return None
-
-    widths = {v.size for v in vectors}
-    if len(widths) > 1:
-        raise ValueError(
-            f"mixed feature widths {sorted(widths)} - re-run `swipesort features --rebuild` "
-            "after changing backend"
-        )
+        without_image += row["features"] is None
 
     X = np.vstack(vectors)
     y = np.array(labels)
@@ -289,13 +329,17 @@ def train(conn: sqlite3.Connection, *, l2: float = 1.0, seed: int = 0) -> TrainR
             majority = 1.0 if y[train_idx].mean() >= 0.5 else 0.0
             baseline = float((y[test] == majority).mean())
 
-    feat_kind = next(iter(feat_kinds)) if len(feat_kinds) == 1 else "mixed"
+    if not feat_kinds:
+        feat_kind = "metadata-only"
+    else:
+        feat_kind = next(iter(feat_kinds)) if len(feat_kinds) == 1 else "mixed"
     model = PreferenceModel.fit(X, y, w, feat_kind=feat_kind, l2=l2)
     db.set_meta(conn, "model", model.to_json())
 
     report = TrainReport(
         n_labels=len(y),
         n_positive=int(y.sum()),
+        n_without_image=without_image,
         n_features=X.shape[1],
         feat_kind=feat_kind,
         holdout_accuracy=holdout_acc,
@@ -321,23 +365,22 @@ def load(conn: sqlite3.Connection) -> PreferenceModel | None:
 
 
 def score_all(conn: sqlite3.Connection, model: PreferenceModel | None = None) -> int:
-    """Refresh ``media.score`` for every row that has features. Returns the count."""
+    """Refresh ``media.score`` for every indexed file. Returns the count."""
     model = model or load(conn)
     if model is None:
         return 0
+    image_dim = model.weights.size - len(META_FEATURE_NAMES)
+    if image_dim < 0:
+        return 0  # a model saved by an older version; the next retrain replaces it
     sizes = dup_group_sizes(conn)
-    updates: list[tuple[float, int]] = []
-    rows = conn.execute("SELECT * FROM media WHERE features IS NOT NULL AND missing=0").fetchall()
-    batch_vectors, batch_ids = [], []
-    for row in rows:
-        vec = row_vector(row, sizes)
-        if vec is None or vec.size != model.weights.size:
-            continue
-        batch_vectors.append(vec)
-        batch_ids.append(row["id"])
-    if batch_vectors:
-        probabilities = model.predict(np.vstack(batch_vectors))
-        updates = [(float(p), mid) for p, mid in zip(probabilities, batch_ids)]
-        conn.executemany("UPDATE media SET score=? WHERE id=?", updates)
-        conn.commit()
-    return len(updates)
+    rows = conn.execute("SELECT * FROM media WHERE missing=0").fetchall()
+    if not rows:
+        return 0
+    vectors = np.vstack([row_vector(row, sizes, image_dim) for row in rows])
+    probabilities = model.predict(vectors)
+    conn.executemany(
+        "UPDATE media SET score=? WHERE id=?",
+        [(float(p), row["id"]) for p, row in zip(probabilities, rows)],
+    )
+    conn.commit()
+    return len(rows)

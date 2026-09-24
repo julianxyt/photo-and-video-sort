@@ -117,17 +117,22 @@
     if (item.kind === "video") {
       const video = document.createElement("video");
       video.src = item.media_url;
-      video.poster = item.thumb_url;
+      if (item.has_thumb) video.poster = item.thumb_url;
       video.muted = true;
       video.loop = true;
       video.playsInline = true;
       video.preload = "metadata";
+      video.addEventListener("error", () => figure.replaceChildren(noPreview(item)), { once: true });
       figure.appendChild(video);
     } else {
       const img = document.createElement("img");
-      img.src = item.thumb_url;
+      // No thumbnail means the computer could not decode it. The phone's own
+      // browser sometimes can - Safari shows HEIC natively - so try the
+      // original before giving up on a picture entirely.
+      img.src = item.has_thumb ? item.thumb_url : item.media_url;
       img.alt = item.filename;
       img.decoding = "async";
+      img.addEventListener("error", () => figure.replaceChildren(noPreview(item)), { once: true });
       figure.appendChild(img);
     }
     card.appendChild(figure);
@@ -161,11 +166,27 @@
     if (item.dup_group_size > 1) badges.appendChild(badge(`${item.dup_group_size} near-identical`, "dup"));
     if (item.kind === "video") badges.appendChild(badge("video", "video"));
     if (item.deferred) badges.appendChild(badge("deferred", ""));
+    if (!item.has_features) badges.appendChild(badge("metadata only", ""));
     badges.appendChild(badge(`→ ${item.target_folder}`, ""));
     if (badges.childElementCount) meta.appendChild(badges);
 
     card.appendChild(meta);
     return card;
+  }
+
+  function noPreview(item) {
+    const box = document.createElement("div");
+    box.className = "no-preview";
+    const title = document.createElement("strong");
+    title.textContent = "No preview";
+    const name = document.createElement("span");
+    name.className = "filename";
+    name.textContent = item.filename;
+    const why = document.createElement("span");
+    why.className = "muted";
+    why.textContent = "Your swipe still counts - the model learns from its size, date and type.";
+    box.append(title, name, why);
+    return box;
   }
 
   function badge(text, cls) {

@@ -177,12 +177,15 @@ def undo_last_decision(conn: sqlite3.Connection) -> sqlite3.Row | None:
 
 
 def labelled_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Media rows carrying a keep/love/drop verdict, with features present."""
+    """Media rows carrying a keep/love/drop verdict.
+
+    Including rows with no image features: a swipe on a video that could not
+    be previewed is still a swipe, and the model learns from its metadata.
+    """
     return conn.execute(
         "SELECT m.*, v.action AS action FROM media m "
         "JOIN verdicts v ON v.media_id = m.id "
-        "WHERE v.action IN ('keep','love','drop') AND m.features IS NOT NULL "
-        "AND m.missing = 0"
+        "WHERE v.action IN ('keep','love','drop') AND m.missing = 0"
     ).fetchall()
 
 
