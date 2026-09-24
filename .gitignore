@@ -1,0 +1,19 @@
+# swipesort's per-library index, thumbnails and model
+.swipesort/
+_Quarantine/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# exiftool, once unzipped next to the scripts
+exiftool-*/
+!exiftool-*.zip
+
+# OS noise
+.DS_Store
+Thumbs.db
