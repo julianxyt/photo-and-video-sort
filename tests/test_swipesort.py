@@ -187,6 +187,29 @@ class LibraryTestCase(unittest.TestCase):
         self.conn = db.connect(self.library.db_path)
         self.addCleanup(self.conn.close)
 
+    def duplicate_pair(self):
+        """The byte-identical pair, as (flagged_as_duplicate, kept)."""
+        flagged = self.conn.execute(
+            "SELECT * FROM media WHERE exact_dup_of IS NOT NULL"
+        ).fetchall()
+        self.assertEqual(len(flagged), 1, "fixture has exactly one identical pair")
+        kept = self.conn.execute(
+            "SELECT * FROM media WHERE id=?", (flagged[0]["exact_dup_of"],)
+        ).fetchone()
+        self.assertIsNotNone(kept)
+        return flagged[0], kept
+
+    def a_plain_keeper(self):
+        """A keeper row that is not part of the byte-identical pair."""
+        flagged, kept = self.duplicate_pair()
+        row = self.conn.execute(
+            "SELECT * FROM media WHERE filename LIKE 'IMG_2019%' AND id NOT IN (?, ?) "
+            "ORDER BY rel_path LIMIT 1",
+            (flagged["id"], kept["id"]),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        return row
+
     def swipe_all(self):
         """Label the fixture population the way a person would."""
         keep_paths = set(self.manifest["keep"])
@@ -214,11 +237,30 @@ class IngestTests(LibraryTestCase):
             self.assertTrue((self.library.thumb_dir / row["thumb"]).exists())
 
     def test_exact_duplicate_is_linked_not_deleted(self):
-        copy = self.conn.execute(
-            "SELECT * FROM media WHERE filename='copy-of-first.jpg'"
-        ).fetchone()
-        self.assertIsNotNone(copy["exact_dup_of"])
-        self.assertTrue(Path(copy["path"]).exists(), "ingest must never delete anything")
+        flagged, kept = self.duplicate_pair()
+        self.assertNotEqual(flagged["id"], kept["id"])
+        self.assertEqual(flagged["sha256"], kept["sha256"])
+        self.assertIsNone(kept["exact_dup_of"], "the survivor points at nobody")
+        for row in (flagged, kept):
+            self.assertTrue(Path(row["path"]).exists(), "ingest must never delete anything")
+
+    def test_duplicate_survivor_does_not_depend_on_walk_order(self):
+        # The pair is Camera/IMG_...jpg and Backup/copy-of-first.jpg. Whichever
+        # os.walk reaches first used to win; now the rule decides, so the
+        # outcome must match the rule rather than the filesystem.
+        flagged, kept = self.duplicate_pair()
+        self.assertLess(
+            ingest.survivor_rank(kept["rel_path"]),
+            ingest.survivor_rank(flagged["rel_path"]),
+        )
+
+    def test_walk_order_is_sorted(self):
+        walked = [str(p.relative_to(self.tmp)) for p in ingest.walk_media(self.library)]
+        by_dir = {}
+        for rel in walked:
+            by_dir.setdefault(str(Path(rel).parent), []).append(Path(rel).name)
+        for folder, names in by_dir.items():
+            self.assertEqual(names, sorted(names), folder)
 
     def test_burst_frames_share_a_near_duplicate_group(self):
         groups = {
@@ -321,9 +363,10 @@ class QueueTests(LibraryTestCase):
         )
 
     def test_exact_duplicates_never_reach_the_queue(self):
-        copy = self.conn.execute("SELECT id FROM media WHERE filename='copy-of-first.jpg'").fetchone()
+        flagged, kept = self.duplicate_pair()
         ids = [i["id"] for i in queue_mod.build(self.conn, mode="backlog", limit=999)]
-        self.assertNotIn(copy["id"], ids)
+        self.assertNotIn(flagged["id"], ids, "the duplicate is not worth a swipe")
+        self.assertIn(kept["id"], ids, "but the copy that survives still is")
 
     def test_near_duplicates_arrive_together(self):
         items = queue_mod.build(self.conn, mode="learn", limit=999)
@@ -423,9 +466,7 @@ class ApplyTests(LibraryTestCase):
     def test_same_name_different_content_keeps_both(self):
         target = self.tmp / "2019 Photos"
         target.mkdir(parents=True, exist_ok=True)
-        row = self.conn.execute(
-            "SELECT * FROM media WHERE filename LIKE 'IMG_2019%' LIMIT 1"
-        ).fetchone()
+        row = self.a_plain_keeper()
         clash = target / row["filename"]
         clash.write_bytes(b"a different file entirely")
         db.record_decision(self.conn, row["id"], "keep")
@@ -440,9 +481,7 @@ class ApplyTests(LibraryTestCase):
     def test_identical_name_and_content_collapses(self):
         target = self.tmp / "2019 Photos"
         target.mkdir(parents=True, exist_ok=True)
-        row = self.conn.execute(
-            "SELECT * FROM media WHERE filename LIKE 'IMG_2019%' LIMIT 1"
-        ).fetchone()
+        row = self.a_plain_keeper()
         shutil.copy2(row["path"], target / row["filename"])
         db.record_decision(self.conn, row["id"], "keep")
         self.conn.commit()
@@ -453,22 +492,26 @@ class ApplyTests(LibraryTestCase):
         self.assertEqual(report.collapsed, 1)
         self.assertEqual(len(list(target.glob(f"{Path(row['filename']).stem}*"))), 1)
 
-    def test_exact_duplicates_are_quarantined_and_the_original_stays(self):
-        original = self.conn.execute(
-            "SELECT * FROM media WHERE filename='copy-of-first.jpg'"
-        ).fetchone()
-        keeper = self.conn.execute(
-            "SELECT * FROM media WHERE id=?", (original["exact_dup_of"],)
-        ).fetchone()
+    def test_exact_duplicates_are_quarantined_and_one_copy_stays(self):
+        flagged, kept = self.duplicate_pair()
         apply_mod.apply_decisions(self.library, sort_keeps=False, quarantine_drops=False)
-        self.assertFalse(Path(original["path"]).exists())
-        self.assertTrue(Path(keeper["path"]).exists())
+        self.assertFalse(Path(flagged["path"]).exists(), "the duplicate left its place")
+        self.assertTrue(Path(kept["path"]).exists(), "exactly one copy must survive")
+        quarantined = list(self.library.quarantine_dir.rglob(Path(flagged["path"]).name))
+        self.assertEqual(len(quarantined), 1, "and it is in quarantine, not deleted")
 
     def test_prune_empty_clears_emptied_folders_but_not_the_root(self):
-        self.swipe_all()
-        apply_mod.apply_decisions(self.library, prune_empty=True)
+        emptied = self.conn.execute(
+            "SELECT id FROM media WHERE rel_path LIKE 'Trip%' AND missing=0"
+        ).fetchall()
+        self.assertTrue(emptied)
+        for row in emptied:
+            db.record_decision(self.conn, row["id"], "drop")
+        self.conn.commit()
+
+        apply_mod.apply_decisions(self.library, sort_keeps=False, prune_empty=True)
+        self.assertFalse((self.tmp / "Trip").exists(), "a folder emptied by the move goes")
         self.assertTrue(self.tmp.is_dir(), "the library root must survive")
-        self.assertFalse((self.tmp / "Backup").exists())
 
     def test_prune_empty_leaves_folders_that_still_hold_files(self):
         self.swipe_all()

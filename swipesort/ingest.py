@@ -57,11 +57,19 @@ class IngestReport:
 
 
 def walk_media(library: Library) -> Iterable[Path]:
-    """Every media file under the library, skipping swipesort's own folders."""
+    """Every media file under the library, skipping swipesort's own folders.
+
+    Sorted, because os.walk yields whatever order the filesystem hands back.
+    That order differs between machines and even between runs, and an unsorted
+    walk makes row ids - and anything derived from them - irreproducible.
+    """
     for dirpath, dirnames, filenames in os.walk(library.root):
         here = Path(dirpath)
-        dirnames[:] = [d for d in dirnames if not library.is_internal(here / d) and not d.startswith(".")]
-        for name in filenames:
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if not library.is_internal(here / d) and not d.startswith(".")
+        )
+        for name in sorted(filenames):
             path = here / name
             if classify.is_media(path):
                 yield path
@@ -306,12 +314,26 @@ def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
     return digest.hexdigest()
 
 
+def survivor_rank(rel_path: str) -> tuple[int, int, str]:
+    """Sort key deciding which of several byte-identical files is kept.
+
+    Shallowest path first, then shortest, then alphabetical.
+
+    Which one survives is arbitrary in the sense that the bytes are the same
+    either way - but it must be *decided*, not left to chance. Keeping whichever
+    file was ingested first meant keeping whichever one os.walk reached first,
+    so the survivor depended on the order the filesystem happened to return
+    directory entries in, and a rescan could pick a different one.
+    """
+    return (len(Path(rel_path).parts), len(rel_path), rel_path)
+
+
 def find_exact_duplicates(conn: sqlite3.Connection) -> tuple[int, int]:
     """Hash only files that share a byte size with another file, then link them.
 
     The original Remove-DuplicateFiles matched on name alone, which deletes two
-    different photos that happen to share a name. Matching on content means the
-    survivor is chosen by path order and nothing unique is ever lost.
+    different photos that happen to share a name. Matching on content means
+    nothing unique is ever lost; ``survivor_rank`` decides which copy stays.
     """
     groups = conn.execute(
         "SELECT size_bytes FROM media WHERE missing=0 GROUP BY size_bytes HAVING COUNT(*) > 1"
@@ -319,10 +341,14 @@ def find_exact_duplicates(conn: sqlite3.Connection) -> tuple[int, int]:
     total = 0
     total_bytes = 0
     for (size,) in ((g["size_bytes"],) for g in groups):
-        rows = conn.execute(
-            "SELECT id, path, sha256 FROM media WHERE size_bytes=? AND missing=0 ORDER BY id",
-            (size,),
-        ).fetchall()
+        rows = sorted(
+            conn.execute(
+                "SELECT id, path, rel_path, sha256 FROM media "
+                "WHERE size_bytes=? AND missing=0",
+                (size,),
+            ).fetchall(),
+            key=lambda row: survivor_rank(row["rel_path"]),
+        )
         digests: dict[str, int] = {}
         for row in rows:
             digest = row["sha256"]

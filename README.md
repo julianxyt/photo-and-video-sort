@@ -214,14 +214,16 @@ tests/              55 tests, stdlib unittest, synthetic library fixtures
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -t tests        # all 55
-python -m unittest discover -s tests -t tests -v     # with names
-python -m unittest -v test_swipesort.ApplyTests      # one class
-python -m unittest -v test_swipesort.ApplyTests.test_undo_restores_every_file
+python -m unittest discover -s tests -t tests                   # all 57
+python -m unittest discover -s tests -t tests -v                # with names
+python -m unittest discover -s tests -t tests -k ApplyTests     # one class
+python -m unittest discover -s tests -t tests -k test_undo_restores_every_file
 ```
 
 (`-s` is where the tests live, `-t` is the import root; both point at `tests/`
-because that is also where `fixtures.py` sits.)
+because that is also where `fixtures.py` sits. Use `-k` to narrow rather than
+naming `test_swipesort.SomeClass` directly - that form only resolves from
+inside `tests/`.)
 
 There are no mocks and no committed image files. `tests/fixtures.py` generates a
 synthetic library on disk in a temp directory - bright detailed "keepers", dark
@@ -237,7 +239,7 @@ through `fastapi.testclient`. Everything is torn down afterwards.
 | `CaptureDateTests` (3) | QuickTime `mvhd` parsing, unreadable files, mtime opt-in |
 | `FeatureTests` (3) | fixed width, finite values, sharp vs blurry |
 | `ModelTests` (4) | fitting, regularisation on separable data, JSON round trip, AUC edges |
-| `IngestTests` (7) | indexing, incremental rescan, duplicates, missing files |
+| `IngestTests` (9) | indexing, incremental rescan, duplicates, missing files, walk order |
 | `ModelOnLibraryTests` (3) | it beats the baseline, and refuses to train when it should |
 | `QueueTests` (9) | all four orderings, filters, deferral, group cohesion |
 | `ApplyTests` (9) | dry runs, quarantine, undo, name collisions, pruning |
@@ -247,6 +249,13 @@ The ones worth knowing about, because they encode promises rather than
 behaviour: `test_dry_run_moves_nothing`, `test_undo_restores_every_file` (which
 snapshots every path before and after and demands they match), and
 `test_same_name_different_content_keeps_both`.
+
+None of them may depend on the order the filesystem returns directory entries
+in. `os.walk` order is not sorted and not stable between machines, and an
+earlier version of these tests assumed a particular one - it passed on three
+runners and failed on the fourth. Ingest now walks in sorted order, and tests
+that involve the duplicate pair assert the invariant (exactly one of the two is
+flagged, both files still exist) rather than naming which.
 
 A full run takes about 50 seconds; most of that is generating and decoding the
 fixture images.
@@ -260,7 +269,8 @@ fixture images.
 * **the test suite** on Python 3.10 and 3.12, on both Ubuntu and Windows.
   Windows is in the matrix deliberately - this tool is aimed at a library
   sitting on a Windows PC, and paths, moves and file locking are exactly what
-  behaves differently there.
+  behaves differently there. The matrix earned its keep on the first run, by
+  catching a filesystem-ordering bug that all local testing had missed.
 * **a CLI smoke test** that builds a fixture library and drives `ingest`,
   `stats`, `queue` and `apply` through the actual command line, then asserts
   that `apply` without `--confirm` moved nothing. The unit tests go through the
